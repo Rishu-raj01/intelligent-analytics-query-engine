@@ -1,187 +1,173 @@
 # Intelligent Analytics Query Engine
 
-A production-oriented natural-language analytics system that converts business questions into validated DuckDB SQL, executes the query deterministically, and returns the result with an explanation and evidence-based confidence score.
+A GenAI-powered analytics engine that converts natural-language business questions into **validated DuckDB SQL**, executes the SQL against the supplied dataset, and returns results with an explanation and confidence score.
 
-> **Design principle:** the LLM understands the question; the database computes the truth.
+> **Design principle:** the LLM interprets the question; the database computes the truth.
 
-## What makes this implementation different
+## Why this design
 
-This is intentionally **not** a collection of hardcoded query patterns and it does not ask an LLM to invent final numbers.
+The assignment requires correctness, GenAI usage, unseen-query support, confidence, explanations, complex analytics, and an optional feedback loop. A direct “ask an LLM for the final number” approach is flexible but unreliable. A fully rule-based parser is deterministic but brittle on unseen wording.
 
-- GenAI performs semantic mapping from business language to the provided schema/data dictionary.
-- The model returns a **strict structured plan**: interpretation, SQL, tables/columns used, assumptions, complexity, analytical features and expected output shape.
-- A local safety layer rejects non-read-only SQL, external file/network readers and unknown tables.
-- DuckDB performs all arithmetic, grouping, ranking, joins and time logic.
-- Failed SQL can be repaired once using the actual validator/database error.
-- `feedback_log.csv` is used as a small **feedback-RAG** layer: embedding + lexical retrieval when available, lexical fallback otherwise.
-- Confidence combines model confidence with deterministic evidence instead of trusting a single LLM score.
-- Tests assert exact analytics for Top-N-per-group, contribution percentages and target comparisons.
-- A CLI, FastAPI endpoint, Dockerfile and CI workflow are included.
-
-## Architecture
+This implementation uses a hybrid architecture:
 
 ```text
-                      CSV files + data_dictionary.json
-                                 |
-                                 v
-                    +--------------------------+
-                    | Schema/Data Profiler     |
-                    | types, samples, nulls,   |
-                    | candidate relationships  |
-                    +------------+-------------+
-                                 |
-Natural-language query           |          optional feedback_log.csv
-        |                        |                    |
-        +------------------------+                    v
-                                 |          +-----------------------+
-                                 |          | Feedback Retriever    |
-                                 |          | embeddings + lexical  |
-                                 |          +-----------+-----------+
-                                 |                      |
-                                 v                      |
-                       +--------------------+<-----------+
-                       | GenAI Planner      |
-                       | Structured Output  |
-                       +---------+----------+
-                                 |
-                         QueryPlan + SQL
-                                 |
-                                 v
-                       +--------------------+
-                       | SQL Safety Layer   |
-                       | read-only + schema |
-                       +---------+----------+
-                                 |
-                                 v
-                       +--------------------+
-                       | DuckDB Executor    |
-                       +----+----------+----+
-                            |          |
-                         error       result
-                            |          |
-                            v          v
-                       GenAI repair  deterministic
-                            |        verification
-                            +----+-----+
-                                 |
-                                 v
-                    +--------------------------+
-                    | Confidence + Explanation |
-                    +------------+-------------+
-                                 |
-                                 v
-                         Required JSON output
+Natural-language query
+        |
+        v
+Schema profiler + data dictionary + relevant feedback
+        |
+        v
+GenAI semantic planner (strict structured output)
+        |
+        v
+Read-only DuckDB SQL
+        |
+        v
+SQL safety / grounding validation
+        |
+        v
+DuckDB deterministic execution
+        |
+        +---- execution error ---> one error-guided GenAI repair
+        |
+        v
+Post-result verification
+        |
+        v
+Result + confidence + explanation
 ```
 
 ## Requirement coverage
 
-| Assignment requirement | Implementation |
+| Requirement | Implementation |
 |---|---|
-| Understand natural language | GenAI planner receives schema profiles + data dictionary |
-| Map business terms to fields | Data dictionary + schema samples are grounded into the prompt |
-| Executable logic | Read-only DuckDB SQL |
-| Aggregation/grouping/filtering | Native SQL operations |
+| Understand natural language | GenAI planner receives the question, physical schema profile and data dictionary |
+| Map business terms to fields | Dictionary metrics/synonyms + real schema samples |
+| Executable logic | DuckDB SQL |
+| Aggregation/grouping/filtering | Native SQL |
 | Ranking | Window functions |
-| Top N within groups | `ROW_NUMBER`/`DENSE_RANK` partitioned by parent group |
-| Contribution percentages | Window/CTE denominator logic with divide-by-zero protection |
+| Top N within groups | `ROW_NUMBER` / `DENSE_RANK` partitioned by parent group |
+| Contribution percentages | CTE/window denominator logic with `NULLIF` protection |
 | Nested logic | Explicit CTEs |
-| Target comparisons | Aggregate actuals to target grain, then join on supported keys |
+| Comparisons with targets | Actuals aggregated to target grain before join |
 | Time-based queries | Date profiling + DuckDB date functions |
-| Meaningful GenAI | Semantic planning + error-guided repair + feedback retrieval |
-| Confidence score | Hybrid semantic + deterministic evidence score |
-| Explanation | Planner interpretation + generated SQL + assumptions + metadata |
-| Feedback loop | Relevant historical corrections retrieved into planner context |
+| Meaningful GenAI | Semantic planning, structured output, error-guided repair, feedback retrieval |
+| Confidence score | Semantic + schema + execution + verification + feedback evidence |
+| Explanation | Understanding, assumptions, generated logic and result reasoning |
+| Feedback loop | Relevant `feedback_log.csv` examples retrieved into planner context |
 | Unseen queries | No exact-query fallback rules or hardcoded answers |
-
-A more detailed evaluator mapping is in [`docs/EVALUATION_MAPPING.md`](docs/EVALUATION_MAPPING.md).
 
 ## Project structure
 
 ```text
 .
 ├── analytics_engine/
-│   ├── config.py          # Environment/configuration
-│   ├── data_loader.py     # CSV loading, profiling, relationships
-│   ├── llm_planner.py     # Structured GenAI planning + repair
-│   ├── validator.py       # SQL safety + grounding checks
-│   ├── executor.py        # Deterministic DuckDB execution
-│   ├── feedback.py        # Feedback-RAG retrieval
-│   ├── verifier.py        # Post-execution consistency checks
-│   ├── confidence.py      # Evidence-based confidence score
-│   ├── models.py          # Typed internal contracts
-│   └── engine.py          # End-to-end orchestration
-├── tests/                 # Exact-result + safety tests
-├── examples/demo_dataset/ # Small reproducible demo data
-├── sample_outputs/        # Reference output format/demo
+│   ├── config.py
+│   ├── data_loader.py
+│   ├── llm_planner.py
+│   ├── validator.py
+│   ├── executor.py
+│   ├── feedback.py
+│   ├── verifier.py
+│   ├── confidence.py
+│   ├── models.py
+│   └── engine.py
+├── dataset/                       # official assignment files
+├── tests/                         # exact-result + safety tests
+├── sample_outputs/
+│   └── official_reference.json
 ├── docs/
-├── main.py                # CLI
-├── api.py                 # FastAPI service
-├── benchmark.py           # Batch evaluation summary
+│   ├── ARCHITECTURE.md
+│   ├── EVALUATION_MAPPING.md
+│   ├── DEMO_SCRIPT.md
+│   └── OFFICIAL_DATASET_VALIDATION.md
+├── main.py                        # CLI
+├── api.py                         # FastAPI endpoint
+├── benchmark.py                   # batch evaluation summary
 ├── Dockerfile
 └── .github/workflows/ci.yml
 ```
 
-## GenAI design
+## Official dataset
 
-The planner uses the OpenAI Responses API with a strict JSON Schema output contract. The model must return:
+The assignment files are included in `dataset/`:
 
-- `understanding`
-- `sql`
-- `used_tables`
-- `referenced_columns`
-- `assumptions`
-- `semantic_confidence`
-- `complexity`
-- `query_features`
-- `expected_output`
-- `explanation`
+```text
+dataset/
+├── sales_data.csv
+├── targets.csv
+├── data_dictionary.json
+└── nl_queries.json
+```
 
-The prompt explicitly prohibits query-specific hardcoding and prohibits the model from calculating final metric values itself.
+`feedback_log.csv` is optional and is auto-detected when present.
+
+### Important data-quality handling
+
+The supplied data contains several evaluation traps that are handled explicitly:
+
+1. **`NA` is a real region value.** Pandas normally treats `NA` as a missing value. The loader preserves it with `keep_default_na=False`, preventing silent corruption of North America groupings and target joins.
+2. **Transport-wrapped files are supported.** If every original CSV/JSON line arrives wrapped as one quoted field, the compatibility loader reverses only that wrapping before parsing.
+3. **The physical schema is authoritative.** The data dictionary provides business semantics, but it does not list every physical field. Valid columns such as `customer_id` and `product_name` can still be used when present in the CSV.
+4. **No evaluation leakage.** `nl_queries.json` contains `expected_logic`, but runtime deliberately extracts only the natural-language `query`. `expected_logic` is never passed to the planner and is never used as a fallback answer.
+5. **Missing comparison periods are not fabricated.** The supplied sales data contains only 2024. For YoY, the engine is instructed to return a `NULL` previous-year value/growth and explain the data limitation.
+
+More detail: [`docs/OFFICIAL_DATASET_VALIDATION.md`](docs/OFFICIAL_DATASET_VALIDATION.md).
+
+## GenAI planner
+
+The planner uses the OpenAI **Responses API** with a strict JSON-schema contract. It must return:
+
+- interpretation (`understanding`),
+- one read-only DuckDB SQL query,
+- tables and columns used,
+- assumptions,
+- complexity,
+- analytical features,
+- expected output shape,
+- semantic confidence,
+- explanation.
+
+The prompt explicitly tells the model **not to compute final numbers** and **not to hardcode evaluation questions**.
 
 ### Why SQL instead of generated Python?
 
-Generated arbitrary Python is difficult to sandbox and audit. SQL is easier to display, validate and test, while DuckDB supports the analytical operations required by the assignment: joins, CTEs, windows, date logic and nested aggregations.
+SQL is easier to audit, validate and sandbox. DuckDB supports all operations required by the task: joins, grouping, window functions, CTEs, ranking, percentages and time logic.
 
-## Feedback loop / RAG
+## SQL safety
 
-When `feedback_log.csv` is present, the engine finds corrections relevant to the current question.
+Before execution the validator:
 
-1. If embeddings are enabled and available, semantic similarity is combined with token-set similarity.
-2. If embedding retrieval fails for any reason, the engine automatically falls back to lexical retrieval.
-3. Up to three relevant examples are inserted into the GenAI planning context.
-4. Positive/negative retrieved evidence contributes a small amount to confidence.
+- permits only one `SELECT` / `WITH ... SELECT` statement,
+- blocks DDL/DML and sensitive commands,
+- blocks external file/network readers such as `read_csv`, `read_parquet`, scanners and `glob`,
+- rejects unknown/unapproved tables,
+- executes only against preloaded in-memory tables.
 
-This keeps feedback useful without making it a single point of failure.
+If valid SQL fails during execution, one repair attempt can be made using the concrete database error while preserving the original business intent.
+
+## Feedback loop
+
+When `feedback_log.csv` exists, the engine retrieves feedback relevant to the new question. It can combine embeddings with lexical similarity, and automatically falls back to lexical retrieval if embeddings are unavailable. Only a few relevant examples are added to the planner context.
+
+This keeps feedback useful without turning historical answers into hardcoded rules.
 
 ## Confidence score
 
-Confidence is **not just the model saying “I am confident.”** It combines:
+The confidence score is an **evidence-based heuristic**, not a claim that `0.92` means “92% statistically guaranteed correct.” It combines:
 
-- 34% semantic interpretation confidence
-- 22% schema grounding
-- 10% assumption clarity
-- 14% successful execution signal
-- 12% deterministic result verification
-- 8% relevant feedback evidence
+- semantic interpretation confidence,
+- schema grounding,
+- explicit assumptions,
+- successful execution,
+- deterministic result verification,
+- relevant feedback evidence.
 
-A repaired query receives an additional penalty. The full score breakdown and reasons are returned in `metadata`.
-
-## Safety and robustness
-
-Before execution, the engine:
-
-- allows only a single `SELECT` / `WITH ... SELECT` query,
-- blocks DDL/DML and sensitive DuckDB commands,
-- blocks external readers such as `read_csv`, `read_parquet`, scanners and `glob`,
-- rejects unknown tables,
-- executes only against preloaded in-memory tables,
-- treats the user query, data dictionary, sample values and feedback as untrusted prompt data.
-
-The batch runner is fault tolerant: one failed/ambiguous query returns a `confidence_score` of `0.0` without aborting the remaining evaluation queries.
+Repairs, missing evidence and verification warnings reduce the score. The detailed breakdown is returned in `metadata`.
 
 ## Setup
 
-Python 3.11+ recommended.
+Python 3.11+ is recommended.
 
 ```bash
 python -m venv .venv
@@ -205,7 +191,7 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Create `.env` from `.env.example`:
+Create `.env` from `.env.example` and add your API key:
 
 ```env
 OPENAI_API_KEY=your_key_here
@@ -216,99 +202,70 @@ ENABLE_FEEDBACK_EMBEDDINGS=true
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 ```
 
-`OPENAI_MODEL` and the embedding model are configurable, so the project is not tied to a single deployment.
-
-## Dataset
-
-Place the official assignment files in `dataset/`:
-
-```text
-dataset/
-├── sales_data.csv
-├── targets.csv
-├── data_dictionary.json
-├── nl_queries.json
-└── feedback_log.csv       # optional
-```
-
-Additional CSV files are auto-loaded. The filename stem becomes the SQL table name.
-
-A tiny reproducible dataset is included in `examples/demo_dataset/` for demonstration and tests.
+The model name is configurable through `OPENAI_MODEL`.
 
 ## Run
 
-### One query
+Run one query:
 
 ```bash
-python main.py --dataset dataset --query "Top 3 products by revenue within each region"
+python main.py --dataset dataset --query "Top product in each region"
 ```
 
-### All queries from `nl_queries.json`
+Run all supplied queries:
 
 ```bash
 python main.py --dataset dataset --all --output results.json
 ```
 
-### Benchmark summary
+Run the benchmark summary:
 
 ```bash
 python benchmark.py --dataset dataset --output benchmark_results.json
 ```
 
-This reports success rate, average confidence, median latency and repair count.
-
-## API
-
-Start the FastAPI service:
+Start the API:
 
 ```bash
 uvicorn api:app --host 0.0.0.0 --port 8000
 ```
 
-Example request:
-
-```bash
-curl -X POST http://localhost:8000/query \
-  -H "Content-Type: application/json" \
-  -d '{"query":"Top 3 products by revenue within each region"}'
-```
-
-Health endpoint:
-
-```text
-GET /health
-```
-
-## Docker
+Docker:
 
 ```bash
 docker build -t intelligent-analytics-engine .
 docker run --rm -p 8000:8000 --env-file .env intelligent-analytics-engine
 ```
 
-Mount the official dataset when required by your runtime/deployment environment.
+## Required output contract
 
-## Output contract
-
-The required fields are preserved, with additional explainability metadata:
+The five assignment fields are always present; additional metadata is included for auditability.
 
 ```json
 {
-  "query": "Top 3 products by revenue within each region",
+  "query": "Top product in each region",
   "generated_logic": "WITH ... SELECT ...",
   "result": [],
-  "confidence_score": 0.92,
-  "explanation": "Revenue is aggregated by region and product, then products are ranked within each region.",
-  "understood_as": "Rank products independently inside every region by revenue and keep three.",
+  "confidence_score": 0.94,
+  "explanation": "Revenue is aggregated by region and product and ranked within each region.",
+  "understood_as": "Find the highest-revenue product independently in each region.",
   "assumptions": [],
   "metadata": {
     "complexity": "complex",
-    "query_features": {"ranking": true},
     "confidence_breakdown": {},
-    "verification_warnings": [],
-    "latency_ms": 0
+    "verification_warnings": []
   }
 }
+```
+
+## Official reference outputs
+
+[`sample_outputs/official_reference.json`](sample_outputs/official_reference.json) contains independently checked reference results for all eight supplied assignment questions. It is **not read by runtime code** and cannot act as an answer cache.
+
+The numerical results and canonical SQL were validated against the supplied dataset. The committed reference confidence values are representative only because no API key is stored in the repository. Generate an actual live-model run with:
+
+```bash
+python main.py --dataset dataset --all --output sample_outputs/model_run.json
 ```
 
 ## Tests
@@ -317,72 +274,53 @@ The required fields are preserved, with additional explainability metadata:
 pytest -q
 ```
 
-The tests are deliberately stronger than “the result is non-empty.” They verify:
+The test suite verifies more than “a result was returned.” It includes:
 
-- exact Top-N-within-group output,
+- official-file ingestion and literal `NA` preservation,
+- schema/dictionary grounding,
+- date coverage detection,
+- exact India/March revenue,
+- exact top-2 city profit ranking,
+- exact AOV by region,
+- exact February target misses and variances,
 - contribution percentages summing to 100%,
-- exact actual-vs-target variance values,
-- end-to-end orchestration with a deterministic fake planner (no network required),
+- top product per region,
+- YoY behavior when the previous year is absent,
+- nested top-3-customer revenue per region,
+- SQL safety,
 - feedback retrieval,
-- SQL safety and prompt-injection boundary cases.
+- end-to-end orchestration with a deterministic fake planner.
 
-The repository also includes a GitHub Actions CI workflow that installs dependencies and runs the suite on every push/pull request.
-
-## Sample output
-
-`sample_outputs/reference_demo.json` demonstrates the result contract against the included demo data. It is clearly marked as a **reference demo**; before final submission, generate `results.json` using the official dataset and configured GenAI model rather than presenting fabricated assignment results.
+GitHub Actions installs dependencies and runs the suite on pushes and pull requests.
 
 ## Tradeoffs
 
-### LLM-generated SQL vs fixed rule parser
+**LLM planner vs. fixed parser:** a fixed parser is predictable but brittle on unseen wording. The LLM generalizes better, while validation and DuckDB provide deterministic boundaries.
 
-A fixed parser is predictable but brittle on unseen wording. An LLM planner generalizes better to business language; the validator and database provide the deterministic boundary.
+**One planner call vs. planner + critic:** a second model call is used only when repair is needed. This reduces latency/cost; deterministic verification provides an additional signal.
 
-### One model call vs planner + critic
+**In-memory feedback retrieval vs. vector database:** appropriate for the small assignment scope. A production version with large feedback history would persist embeddings in a vector store.
 
-This implementation uses one planning call and only performs another call when repair is needed. That keeps latency/cost lower than always using a second critic model. Deterministic post-execution verification provides a cheap additional signal.
-
-### Feedback embeddings vs vector database
-
-The assignment scope does not need a separate vector service. Small feedback logs can be embedded and scored in memory. For large production histories, the retriever would move to a vector store with persisted embeddings.
-
-### Confidence calibration
-
-The score is interpretable but heuristic. With labeled evaluation history, the next step would be empirical calibration (for example logistic/isotonic calibration) against actual correctness.
-
-## Edge cases handled
-
-- null values,
-- empty result sets,
-- divide-by-zero in percentages,
-- text-formatted dates,
-- multi-table joins,
-- Top-N ties/order stability,
-- target-grain joins,
-- SQL validation failures,
-- execution failures with error-guided repair,
-- prompt-injection-style requests for unsafe SQL,
-- unknown tables,
-- oversized result sets with truncation metadata.
+**Heuristic confidence:** interpretable and useful for this assignment, but not statistically calibrated. With labeled production data, the score should be calibrated against actual correctness.
 
 ## If I had more time
 
-1. Add dataset-level golden answers for every official `nl_queries.json` item once expected outputs are available.
-2. Add AST-level SQL lineage/type validation.
-3. Calibrate confidence against labeled evaluation data.
-4. Cache plans/results using query + dataset fingerprint.
-5. Add execution resource/time limits for very large datasets.
-6. Add an Azure OpenAI provider adapter and Azure deployment manifests.
-7. Persist feedback embeddings in a vector store when feedback volume becomes large.
+- AST-level SQL lineage and type validation,
+- empirical confidence calibration,
+- query/result caching keyed by dataset fingerprint,
+- execution time/resource limits for large data,
+- provider adapters for Azure OpenAI,
+- persisted feedback embeddings/vector retrieval,
+- a larger adversarial unseen-query evaluation suite.
 
-## Design summary
+## Summary
 
-The main separation of responsibilities is deliberate:
+The system separates responsibilities intentionally:
 
-- **GenAI** understands business language and creates the analytical plan.
-- **Validation** enforces the execution boundary.
-- **DuckDB** computes the answer.
-- **Feedback-RAG** improves future plans.
-- **Verification + confidence** make uncertainty visible instead of hiding it.
+- **GenAI** understands business language and creates a structured analytical plan.
+- **Validation** enforces a safe execution boundary.
+- **DuckDB** computes the result.
+- **Feedback retrieval** improves future planning.
+- **Verification + confidence** expose uncertainty instead of hiding it.
 
-That makes the system flexible enough for unseen questions while remaining auditable, testable and deployable.
+This keeps the engine flexible enough for unseen questions while remaining auditable, testable and deterministic where correctness matters.
