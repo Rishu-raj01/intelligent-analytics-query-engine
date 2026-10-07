@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import re
 from dataclasses import dataclass
@@ -34,6 +36,64 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def _unwrap_line_encoded_text(text: str) -> str:
+    """Repair files where every logical line was exported as one quoted CSV field.
+
+    Some spreadsheet/download pipelines wrap each original CSV/JSON line in quotes and
+    double the quotes inside it. This helper reverses that transport encoding without
+    changing the actual values.
+    """
+    repaired: list[str] = []
+    for line in text.splitlines():
+        if line.startswith('"'):
+            try:
+                parsed = next(csv.reader([line]))
+                if len(parsed) == 1:
+                    repaired.append(parsed[0])
+                    continue
+            except csv.Error:
+                pass
+        repaired.append(line)
+    return "\n".join(repaired)
+
+
+def read_csv_compat(path: Path) -> pd.DataFrame:
+    """Read normal CSVs and line-wrapped CSV exports while preserving literal 'NA'."""
+    kwargs = {
+        "encoding": "utf-8-sig",
+        # Critical: the assignment uses region='NA' (North America). Pandas normally
+        # treats 'NA' as a missing value, which would silently corrupt analytics/joins.
+        "keep_default_na": False,
+        # Still represent genuinely empty fields as missing values.
+        "na_values": [""],
+    }
+    df = pd.read_csv(path, **kwargs)
+
+    # The supplied assignment CSVs may arrive with each full row quoted as one field.
+    if len(df.columns) == 1 and "," in str(df.columns[0]):
+        raw = path.read_text(encoding="utf-8-sig")
+        repaired = _unwrap_line_encoded_text(raw)
+        df = pd.read_csv(io.StringIO(repaired), keep_default_na=False, na_values=[""])
+
+    # Defensive cleanup for BOMs/whitespace that occasionally survive exports.
+    df.columns = [str(c).lstrip("\ufeff").strip() for c in df.columns]
+    return df
+
+
+def read_json_compat(path: Path) -> Any:
+    """Read standard JSON plus line-wrapped JSON exports without semantic changes."""
+    text = path.read_text(encoding="utf-8-sig")
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = json.loads(_unwrap_line_encoded_text(text))
+
+    # Also tolerate a file whose entire JSON document was serialized as a JSON string.
+    if isinstance(parsed, str):
+        parsed = json.loads(parsed)
+    return parsed
+
+
 @dataclass
 class DatasetBundle:
     tables: dict[str, pd.DataFrame]
@@ -61,7 +121,7 @@ class DatasetLoader:
                 feedback_path = csv_path
                 continue
             table_name = safe_table_name(csv_path)
-            tables[table_name] = pd.read_csv(csv_path)
+            tables[table_name] = read_csv_compat(csv_path)
 
         if not tables:
             raise FileNotFoundError(
@@ -71,8 +131,7 @@ class DatasetLoader:
         dictionary_path = self.dataset_dir / "data_dictionary.json"
         data_dictionary: Any = {}
         if dictionary_path.exists():
-            with dictionary_path.open("r", encoding="utf-8") as f:
-                data_dictionary = json.load(f)
+            data_dictionary = read_json_compat(dictionary_path)
 
         query_path = self.dataset_dir / "nl_queries.json"
         nl_queries = self._load_queries(query_path) if query_path.exists() else []
@@ -91,9 +150,11 @@ class DatasetLoader:
 
     @staticmethod
     def _load_queries(path: Path) -> list[str]:
-        with path.open("r", encoding="utf-8") as f:
-            raw = json.load(f)
+        raw = read_json_compat(path)
 
+        # Intentionally extract only the natural-language question. If the assignment
+        # ships evaluator/reference metadata such as `expected_logic`, it is NOT exposed
+        # to the LLM planner. This avoids answer leakage and query-specific hardcoding.
         if isinstance(raw, list):
             output: list[str] = []
             for item in raw:
@@ -136,6 +197,7 @@ class DatasetLoader:
             unique_count = int(non_null.nunique(dropna=True)) if len(non_null) else 0
 
             date_like = False
+            parsed_dates: pd.Series | None = None
             if len(non_null) and (
                 "date" in str(col).lower()
                 or "month" in str(col).lower()
@@ -143,21 +205,28 @@ class DatasetLoader:
                 or "time" in str(col).lower()
             ):
                 try:
-                    parsed = pd.to_datetime(non_null.head(100), errors="coerce")
-                    date_like = float(parsed.notna().mean()) >= 0.8
+                    parsed_dates = pd.to_datetime(non_null.head(1000), errors="coerce")
+                    date_like = float(parsed_dates.notna().mean()) >= 0.8
                 except Exception:
                     date_like = False
 
-            columns.append(
-                {
-                    "name": str(col),
-                    "dtype": str(series.dtype),
-                    "null_count": int(series.isna().sum()),
-                    "unique_count": unique_count,
-                    "sample_values": samples,
-                    "date_like": date_like,
-                }
-            )
+            profile: dict[str, Any] = {
+                "name": str(col),
+                "dtype": str(series.dtype),
+                "null_count": int(series.isna().sum()),
+                "unique_count": unique_count,
+                "sample_values": samples,
+                "date_like": date_like,
+            }
+            if date_like and parsed_dates is not None:
+                valid_dates = parsed_dates.dropna()
+                if len(valid_dates):
+                    profile["date_coverage"] = {
+                        "min": valid_dates.min().isoformat(),
+                        "max": valid_dates.max().isoformat(),
+                        "years": sorted({int(x) for x in valid_dates.dt.year.tolist()}),
+                    }
+            columns.append(profile)
         return {"table": name, "rows": int(len(df)), "columns": columns}
 
     @staticmethod
