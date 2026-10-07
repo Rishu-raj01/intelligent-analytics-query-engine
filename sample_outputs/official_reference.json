@@ -1,0 +1,58 @@
+[
+  {
+    "query": "Total sales in India for March",
+    "generated_logic": "SELECT SUM(quantity * unit_price * (1 - discount)) AS total_sales FROM sales_data WHERE country='India' AND strftime(TRY_CAST(order_date AS DATE), '%Y-%m')='2024-03'",
+    "result": 108.0,
+    "confidence_score": 0.98,
+    "explanation": "Mapped sales to revenue, filtered India and March 2024, then summed the revenue formula from the data dictionary."
+  },
+  {
+    "query": "Top 2 cities by profit",
+    "generated_logic": "SELECT city, SUM(profit) AS total_profit FROM sales_data GROUP BY city ORDER BY total_profit DESC, city ASC LIMIT 2",
+    "result": [{"city":"New York","total_profit":200.0},{"city":"San Francisco","total_profit":180.0}],
+    "confidence_score": 0.99,
+    "explanation": "Grouped by city, summed profit, sorted descending, and returned two rows."
+  },
+  {
+    "query": "Average order value by region",
+    "generated_logic": "SELECT region, SUM(quantity * unit_price * (1 - discount))/NULLIF(COUNT(order_id),0) AS avg_order_value FROM sales_data GROUP BY region ORDER BY region",
+    "result": [{"region":"APAC","avg_order_value":118.5},{"region":"EMEA","avg_order_value":799.3333333333},{"region":"NA","avg_order_value":1087.4666666667}],
+    "confidence_score": 0.99,
+    "explanation": "Applied AOV = revenue / orders from the data dictionary and grouped by region."
+  },
+  {
+    "query": "Which region missed its target in Feb?",
+    "generated_logic": "WITH actual AS (SELECT region, strftime(TRY_CAST(order_date AS DATE), '%Y-%m') AS month, SUM(quantity * unit_price * (1 - discount)) AS actual_revenue FROM sales_data GROUP BY region, month) SELECT a.region,a.actual_revenue,t.target_revenue,a.actual_revenue-t.target_revenue AS variance FROM actual a JOIN targets t ON a.region=t.region AND a.month=t.month WHERE a.month='2024-02' AND a.actual_revenue<t.target_revenue ORDER BY a.region",
+    "result": [{"region":"APAC","actual_revenue":75.0,"target_revenue":6000.0,"variance":-5925.0},{"region":"EMEA","actual_revenue":255.0,"target_revenue":7500.0,"variance":-7245.0},{"region":"NA","actual_revenue":1116.0,"target_revenue":9500.0,"variance":-8384.0}],
+    "confidence_score": 0.98,
+    "explanation": "Aggregated actual revenue to region-month grain before joining targets on region and month, then kept regions below target."
+  },
+  {
+    "query": "Sales contribution % by category",
+    "generated_logic": "WITH c AS (SELECT product_category,SUM(quantity * unit_price * (1 - discount)) AS revenue FROM sales_data GROUP BY product_category) SELECT product_category,revenue,100.0*revenue/NULLIF(SUM(revenue) OVER (),0) AS contribution_pct FROM c ORDER BY contribution_pct DESC",
+    "result": [{"product_category":"Technology","revenue":5402.0,"contribution_pct":88.0607720465},{"product_category":"Furniture","revenue":579.0,"contribution_pct":9.4385759002},{"product_category":"Office Supplies","revenue":153.4,"contribution_pct":2.5006520533}],
+    "confidence_score": 0.99,
+    "explanation": "Aggregated category revenue and divided each category by the global revenue total."
+  },
+  {
+    "query": "Top product in each region",
+    "generated_logic": "WITH p AS (SELECT region,product_name,SUM(quantity * unit_price * (1 - discount)) AS revenue FROM sales_data GROUP BY region,product_name), r AS (SELECT *,DENSE_RANK() OVER (PARTITION BY region ORDER BY revenue DESC) AS rank FROM p) SELECT region,product_name,revenue FROM r WHERE rank=1 ORDER BY region",
+    "result": [{"region":"APAC","product_name":"Ergo Chair","revenue":324.0},{"region":"EMEA","product_name":"Samsung Galaxy","revenue":1288.0},{"region":"NA","product_name":"Dell XPS","revenue":2068.0}],
+    "confidence_score": 0.98,
+    "explanation": "Ranked aggregated product revenue independently inside every region and kept rank 1."
+  },
+  {
+    "query": "YoY growth in revenue",
+    "generated_logic": "WITH yearly AS (SELECT EXTRACT(YEAR FROM TRY_CAST(order_date AS DATE))::INTEGER AS year,SUM(quantity * unit_price * (1 - discount)) AS current_year_revenue FROM sales_data GROUP BY year), l AS (SELECT year,current_year_revenue,LAG(current_year_revenue) OVER (ORDER BY year) AS previous_year_revenue FROM yearly) SELECT year,current_year_revenue,previous_year_revenue,100.0*(current_year_revenue-previous_year_revenue)/NULLIF(previous_year_revenue,0) AS yoy_growth_pct FROM l ORDER BY year",
+    "result": [{"year":2024,"current_year_revenue":6134.4,"previous_year_revenue":null,"yoy_growth_pct":null}],
+    "confidence_score": 0.72,
+    "explanation": "Only 2024 exists in the dataset, so prior-year revenue and YoY growth are unavailable and remain NULL instead of being fabricated."
+  },
+  {
+    "query": "Revenue of top 3 customers per region",
+    "generated_logic": "WITH c AS (SELECT region,customer_id,SUM(quantity * unit_price * (1 - discount)) AS revenue FROM sales_data GROUP BY region,customer_id), r AS (SELECT *,ROW_NUMBER() OVER (PARTITION BY region ORDER BY revenue DESC,customer_id) AS rank FROM c) SELECT region,SUM(revenue) AS top_3_customers_revenue FROM r WHERE rank<=3 GROUP BY region ORDER BY region",
+    "result": [{"region":"APAC","top_3_customers_revenue":474.0},{"region":"EMEA","top_3_customers_revenue":2398.0},{"region":"NA","top_3_customers_revenue":3262.4}],
+    "confidence_score": 0.97,
+    "explanation": "Aggregated customer revenue per region, ranked customers within each region, kept the top three, then summed back to region grain."
+  }
+]
