@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnalyticsQueryEngineOutput",
+  "type": "object",
+  "required": ["query", "generated_logic", "result", "confidence_score", "explanation"],
+  "properties": {
+    "query": {"type": "string"},
+    "generated_logic": {"type": "string"},
+    "result": {},
+    "confidence_score": {"type": "number", "minimum": 0, "maximum": 1},
+    "explanation": {"type": "string"},
+    "understood_as": {"type": "string"},
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "metadata": {"type": "object"}
+  },
+  "additionalProperties": true
+}

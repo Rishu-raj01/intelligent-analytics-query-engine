@@ -1,0 +1,8 @@
+order_id,order_date,region,city,customer,product,quantity,unit_price,discount,profit
+1,2026-01-03,North,Delhi,Alice,Laptop Stand,2,100,0,50
+2,2026-01-04,North,Delhi,Bob,Keyboard,1,300,0.1,70
+3,2026-01-05,South,Bengaluru,Alice,Laptop Stand,4,50,0,60
+4,2026-01-06,South,Chennai,Cara,Monitor,1,500,0,110
+5,2026-01-07,North,Noida,Alice,Monitor,1,400,0,90
+6,2026-02-02,North,Delhi,Dev,Keyboard,3,120,0.05,80
+7,2026-02-08,South,Chennai,Cara,Laptop Stand,2,90,0,45

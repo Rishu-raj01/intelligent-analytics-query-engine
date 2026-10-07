@@ -1,0 +1,10 @@
+pandas>=2.2
+numpy>=2.0
+duckdb>=1.4
+openai>=2.0
+python-dotenv>=1.0
+rapidfuzz>=3.9
+fastapi>=0.115
+uvicorn>=0.30
+pydantic>=2.8
+pytest>=8.0

@@ -1,0 +1,2 @@
+query,is_correct,corrected_logic,feedback
+"Top 3 products by revenue in each region",true,"WITH p AS (SELECT region, product, SUM(revenue) revenue FROM sales_data GROUP BY region, product), r AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY region ORDER BY revenue DESC) rn FROM p) SELECT region, product, revenue FROM r WHERE rn <= 3","Use ranking inside each region, not globally."

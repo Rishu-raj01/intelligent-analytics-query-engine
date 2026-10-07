@@ -1,0 +1,31 @@
+{
+  "tables": {
+    "sales_data": {
+      "description": "Order-level sales transactions",
+      "business_terms": {
+        "sales": "Revenue",
+        "revenue": "quantity * unit_price * (1 - discount)",
+        "earnings": "profit"
+      },
+      "columns": {
+        "order_date": "Transaction date in YYYY-MM-DD format",
+        "region": "Sales region",
+        "city": "Customer city",
+        "customer": "Customer name",
+        "product": "Product name",
+        "quantity": "Units sold",
+        "unit_price": "Price per unit before discount",
+        "discount": "Discount fraction from 0 to 1",
+        "profit": "Profit amount for the row"
+      }
+    },
+    "targets": {
+      "description": "Monthly revenue target by region",
+      "columns": {
+        "month": "Calendar month in YYYY-MM",
+        "region": "Sales region",
+        "target_revenue": "Revenue target"
+      }
+    }
+  }
+}

@@ -1,0 +1,3 @@
+query,corrected_logic,feedback,is_correct
+"Top products by revenue within each region","Use ROW_NUMBER partitioned by region after aggregating product revenue","Ranking must restart independently for every region",true
+"Which regions missed monthly revenue target?","Aggregate actual revenue to region-month then join targets on region and month","Do not join targets at transaction grain",true
