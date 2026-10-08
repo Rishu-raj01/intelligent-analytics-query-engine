@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Intelligent Analytics Query Engine</title>
+  <style>
+    :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f6f8fc}
+    *{box-sizing:border-box} body{margin:0;background:linear-gradient(135deg,#f7f9fd 0%,#edf3ff 100%);min-height:100vh}
+    .wrap{max-width:1100px;margin:0 auto;padding:38px 20px 64px}.hero{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:22px}
+    h1{font-size:clamp(28px,4vw,44px);line-height:1.05;margin:0 0 12px}.sub{color:#60708d;max-width:720px;font-size:16px;line-height:1.6}
+    .badge{background:#e9f7ee;color:#17643a;border:1px solid #c5ead2;padding:8px 12px;border-radius:999px;font-size:13px;font-weight:700;white-space:nowrap}
+    .card{background:#fff;border:1px solid #dfe6f2;border-radius:18px;box-shadow:0 10px 30px rgba(40,61,102,.08);padding:22px;margin-top:18px}
+    .label{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#687996;margin-bottom:8px}
+    textarea{width:100%;min-height:100px;resize:vertical;border:1px solid #ccd6e7;border-radius:13px;padding:14px 16px;font:inherit;outline:none;background:#fbfcff}
+    textarea:focus{border-color:#6c8ee8;box-shadow:0 0 0 3px rgba(108,142,232,.14)}
+    .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.btn{border:0;border-radius:11px;padding:11px 15px;font-weight:800;cursor:pointer;font-size:14px}
+    .primary{background:#315ecf;color:#fff}.primary:hover{background:#274eae}.ghost{background:#eef3ff;color:#294a9f}
+    .examples button{background:#f4f7fc;border:1px solid #dde5f2;color:#42516b;border-radius:999px;padding:8px 11px;cursor:pointer}
+    .status{margin-left:auto;color:#667590;font-size:13px;align-self:center}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}@media(max-width:820px){.grid{grid-template-columns:1fr}.hero{flex-direction:column}.status{margin-left:0}}
+    pre{white-space:pre-wrap;word-break:break-word;background:#111827;color:#e5edf8;padding:16px;border-radius:13px;min-height:92px;overflow:auto;font-size:13px;line-height:1.5}
+    .metric{display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #eef1f6}.metric:last-child{border-bottom:0}.metric strong{font-size:20px}.muted{color:#6b7890;font-size:13px}
+    .table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-bottom:1px solid #edf0f5}th{background:#f7f9fc;color:#52617a}
+    .error{color:#a52c2c;background:#fff0f0;border:1px solid #ffd0d0;padding:12px;border-radius:10px;display:none;margin-top:12px}
+    .spinner{display:none;margin-left:8px}.footer{margin-top:20px;color:#7a879d;font-size:12px;text-align:center}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div><h1>Intelligent Analytics Query Engine</h1><div class="sub">Ask a business question in plain English. Gemini interprets the intent, safe DuckDB SQL is generated and validated, and DuckDB computes the final answer.</div></div>
+      <div class="badge" id="providerBadge">Checking engine…</div>
+    </section>
+
+    <section class="card">
+      <div class="label">Ask a business question</div>
+      <textarea id="query" placeholder="Example: Top product in each region">Total sales in India for March</textarea>
+      <div class="row examples">
+        <button data-q="Total sales in India for March">India March sales</button>
+        <button data-q="Top product in each region">Top product / region</button>
+        <button data-q="Which region missed its target in Feb?">Target misses</button>
+        <button data-q="Sales contribution % by category">Category contribution</button>
+      </div>
+      <div class="row">
+        <button class="btn primary" id="runBtn">Run analysis <span class="spinner" id="spinner">…</span></button>
+        <button class="btn ghost" id="clearBtn">Clear</button>
+        <span class="status" id="status">Ready</span>
+      </div>
+      <div class="error" id="error"></div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <div class="label">Result</div>
+        <div id="result" class="muted">Run a query to see results.</div>
+      </div>
+      <div class="card">
+        <div class="label">Reliability</div>
+        <div class="metric"><span>Confidence score</span><strong id="confidence">—</strong></div>
+        <div class="metric"><span>Provider / model</span><span id="model" class="muted">—</span></div>
+        <div class="metric"><span>Latency</span><span id="latency" class="muted">—</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="label">Generated DuckDB SQL</div>
+      <pre id="sql">SQL will appear here.</pre>
+    </section>
+
+    <section class="card">
+      <div class="label">Understanding & explanation</div>
+      <p id="understanding" class="muted">—</p>
+      <p id="explanation" class="muted">—</p>
+    </section>
+
+    <div class="footer">LLM interprets the question; DuckDB computes the truth.</div>
+  </main>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+
+  function renderResult(value){
+    if (Array.isArray(value)) {
+      if (!value.length) return '<span class="muted">No rows returned.</span>';
+      const cols = [...new Set(value.flatMap(r => Object.keys(r)))];
+      return `<div class="table-wrap"><table><thead><tr>${cols.map(c=>`<th>${escapeHtml(c)}</th>`).join('')}</tr></thead><tbody>${value.map(r=>`<tr>${cols.map(c=>`<td>${escapeHtml(r[c])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    }
+    if (value && typeof value === 'object') return `<pre>${escapeHtml(JSON.stringify(value,null,2))}</pre>`;
+    return `<strong style="font-size:26px">${escapeHtml(value)}</strong>`;
+  }
+
+  async function health(){
+    try{
+      const r = await fetch('/health'); const d = await r.json();
+      $('providerBadge').textContent = `${d.provider} · ${d.model}`;
+    }catch{ $('providerBadge').textContent = 'Engine offline'; }
+  }
+
+  async function run(){
+    const q = $('query').value.trim(); if(!q) return;
+    $('error').style.display='none'; $('runBtn').disabled=true; $('spinner').style.display='inline'; $('status').textContent='Analyzing…';
+    const started=performance.now();
+    try{
+      const r=await fetch('/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q})});
+      const d=await r.json();
+      if(!r.ok) throw new Error(d.detail || 'Query failed');
+      $('result').innerHTML=renderResult(d.result);
+      $('confidence').textContent=Number(d.confidence_score).toFixed(3);
+      $('sql').textContent=d.generated_logic || 'No SQL returned.';
+      $('understanding').textContent=`Understood as: ${d.understood_as || '—'}`;
+      $('explanation').textContent=d.explanation || '—';
+      $('model').textContent=`${d.metadata?.provider || '—'} / ${d.metadata?.model || '—'}`;
+      $('latency').textContent=`${d.metadata?.latency_ms ?? Math.round(performance.now()-started)} ms`;
+      $('status').textContent='Completed';
+    }catch(e){
+      $('error').textContent=e.message; $('error').style.display='block'; $('status').textContent='Failed';
+    }finally{$('runBtn').disabled=false;$('spinner').style.display='none'}
+  }
+
+  document.querySelectorAll('[data-q]').forEach(b=>b.addEventListener('click',()=>{$('query').value=b.dataset.q;}));
+  $('runBtn').addEventListener('click',run);
+  $('clearBtn').addEventListener('click',()=>{$('query').value='';$('result').innerHTML='<span class="muted">Run a query to see results.</span>';$('sql').textContent='SQL will appear here.';$('confidence').textContent='—';$('status').textContent='Ready';});
+  $('query').addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter')run();});
+  health();
+</script>
+</body>
+</html>
