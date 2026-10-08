@@ -8,6 +8,7 @@ from .config import Settings
 from .data_loader import DatasetLoader
 from .executor import DuckDBExecutor
 from .feedback import FeedbackStore
+from .gemini_planner import GeminiPlanner
 from .llm_planner import LLMPlanner
 from .models import EngineOutput, ExecutionResult
 from .validator import validate_plan_metadata, validate_sql
@@ -23,7 +24,11 @@ class AnalyticsQueryEngine:
             enable_embeddings=settings.enable_feedback_embeddings,
             embedding_model=settings.embedding_model,
         )
-        self.planner = LLMPlanner(settings.model)
+        self.planner = (
+            GeminiPlanner(settings.model)
+            if settings.provider == "gemini"
+            else LLMPlanner(settings.model)
+        )
         self.executor = DuckDBExecutor(self.bundle.tables, max_rows=settings.max_result_rows)
         self.schema_context = {
             "tables": self.bundle.profiles,
@@ -111,6 +116,7 @@ class AnalyticsQueryEngine:
             understood_as=plan.understanding,
             assumptions=plan.assumptions,
             metadata={
+                "provider": self.settings.provider,
                 "model": self.settings.model,
                 "complexity": plan.complexity,
                 "query_features": plan.query_features.to_dict(),
@@ -143,7 +149,7 @@ class AnalyticsQueryEngine:
                 explanation=f"The query could not be executed reliably: {exc}",
                 understood_as="Unable to produce a validated executable interpretation.",
                 assumptions=[],
-                metadata={"model": self.settings.model, "error": str(exc)},
+                metadata={"provider": self.settings.provider, "model": self.settings.model, "error": str(exc)},
             )
 
     @staticmethod
