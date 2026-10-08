@@ -16,14 +16,27 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _provider_model(provider: str) -> str:
+    if provider == "gemini":
+        return os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    return os.getenv("OPENAI_MODEL", "gpt-5.6")
+
+
 @dataclass(frozen=True)
 class Settings:
     dataset_dir: Path = Path(os.getenv("DATASET_DIR", "dataset"))
-    model: str = os.getenv("OPENAI_MODEL", "gpt-6-luna")
+    provider: str = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+    model: str = ""
     max_repair_attempts: int = int(os.getenv("MAX_REPAIR_ATTEMPTS", "1"))
     max_result_rows: int = int(os.getenv("MAX_RESULT_ROWS", "5000"))
-    enable_feedback_embeddings: bool = _env_bool("ENABLE_FEEDBACK_EMBEDDINGS", True)
+    enable_feedback_embeddings: bool = _env_bool("ENABLE_FEEDBACK_EMBEDDINGS", False)
     embedding_model: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+
+    def __post_init__(self) -> None:
+        provider = self.provider if self.provider in {"gemini", "openai"} else "gemini"
+        object.__setattr__(self, "provider", provider)
+        if not self.model:
+            object.__setattr__(self, "model", _provider_model(provider))
 
 
 def get_settings(dataset_dir: str | Path | None = None) -> Settings:
@@ -32,6 +45,7 @@ def get_settings(dataset_dir: str | Path | None = None) -> Settings:
         return base
     return Settings(
         dataset_dir=Path(dataset_dir),
+        provider=base.provider,
         model=base.model,
         max_repair_attempts=base.max_repair_attempts,
         max_result_rows=base.max_result_rows,
